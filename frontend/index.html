@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Entertainment Recommender</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header>
+  <h1>🎬 Entertainment Recommender</h1>
+  <div style="display:flex; align-items:center;">
+    <button class="theme-toggle" id="theme-toggle-btn">🌙 Dark</button>
+    <div id="edit-prefs-wrap" style="display:none">
+      <button class="secondary" id="edit-prefs-btn">Edit genres</button>
+    </div>
+  </div>
+</header>
+
+<nav id="top-nav" style="display:none">
+  <button data-view="for-me">For Me</button>
+  <button data-view="explore">Explore</button>
+</nav>
+
+<main id="app"></main>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
