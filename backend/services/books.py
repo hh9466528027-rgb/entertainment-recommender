@@ -1,118 +1,242 @@
 """
-Novels — Google Books API (metadata/purchase links) +
-Project Gutenberg / Open Library (free, legal, public-domain full texts)
-Google Books docs: https://developers.google.com/books
-Gutenberg (via Gutendex, free, no key): https://gutendex.com/
-Open Library docs: https://openlibrary.org/developers/api
+Novel discovery through Google Books, Project Gutenberg (Gutendex), and
+Open Library. Provider failures are handled here so the API returns usable
+fallback results or a clear error instead of an unhandled HTTP 500.
 """
+import logging
+
 import httpx
 from config import GOOGLE_BOOKS_API_KEY
 
 GOOGLE_BOOKS_URL = "https://www.googleapis.com/books/v1/volumes"
 GUTENDEX_URL = "https://gutendex.com/books/"
 OPEN_LIBRARY_URL = "https://openlibrary.org/search.json"
+TIMEOUT = httpx.Timeout(18.0, connect=8.0)
+HEADERS = {
+    "Accept": "application/json",
+    "User-Agent": "EntertainmentRecommender/1.0",
+}
+OPEN_LIBRARY_FIELDS = (
+    "key,title,author_name,cover_i,first_publish_year,public_scan_b,has_fulltext,subject"
+)
+logger = logging.getLogger(__name__)
 
-# Free public APIs can be slow or briefly down — fail fast and gracefully
-# instead of hanging the request or crashing the whole endpoint.
-TIMEOUT = httpx.Timeout(12.0, connect=8.0)
+
+async def _get_json(url: str, params: dict):
+    async with httpx.AsyncClient(timeout=TIMEOUT, headers=HEADERS) as client:
+        response = await client.get(url, params=params)
+        response.raise_for_status()
+        return response.json()
+
+
+def _log_provider_failure(provider: str, exc: Exception):
+    # Avoid logging full request URLs because Google Books API keys may appear
+    # in query parameters.
+    logger.warning("%s request failed (%s)", provider, type(exc).__name__)
+
+
+def _google_params(query: str, limit: int, **extra):
+    params = {"q": query, "maxResults": min(max(1, int(limit)), 40), **extra}
+    if GOOGLE_BOOKS_API_KEY:
+        params["key"] = GOOGLE_BOOKS_API_KEY
+    return params
+
+
+async def _google_search(query: str, limit: int = 20, **extra):
+    data = await _get_json(GOOGLE_BOOKS_URL, _google_params(query, limit, **extra))
+    return [_format_google_item(row) for row in data.get("items", []) if isinstance(row, dict)]
+
+
+async def _gutendex_search(query: str, limit: int = 20):
+    data = await _get_json(GUTENDEX_URL, {"search": query})
+    rows = data.get("results", [])
+    return [_format_gutenberg_item(row) for row in rows[:limit] if isinstance(row, dict)]
+
+
+async def _gutendex_topic(topic: str, limit: int = 20):
+    data = await _get_json(GUTENDEX_URL, {"topic": topic})
+    rows = data.get("results", [])
+    return [_format_gutenberg_item(row) for row in rows[:limit] if isinstance(row, dict)]
+
+
+async def _open_library_search(query: str, limit: int = 20, public_only: bool = False):
+    params = {
+        "q": query,
+        "limit": min(max(1, int(limit)) * 2, 100),
+        "fields": OPEN_LIBRARY_FIELDS,
+    }
+    data = await _get_json(OPEN_LIBRARY_URL, params)
+    rows = data.get("docs", [])
+    items = [_format_open_library_item(row) for row in rows if isinstance(row, dict)]
+    if public_only:
+        items = [item for item in items if item.get("is_free")]
+    return items[:limit]
 
 
 async def search(query: str, limit: int = 20):
-    params = {"q": query, "maxResults": limit}
-    if GOOGLE_BOOKS_API_KEY:
-        params["key"] = GOOGLE_BOOKS_API_KEY
+    query = str(query or "").strip()
+    if not query:
+        return {"error": "Enter a title or author to search for novels."}
 
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-            resp = await client.get(GOOGLE_BOOKS_URL, params=params)
-            resp.raise_for_status()
-            data = resp.json()
-        return [_format_google_item(r) for r in data.get("items", [])]
-    except httpx.HTTPError:
-        return {"error": "Google Books is temporarily unreachable. Try again in a moment."}
+        items = await _google_search(query, limit)
+        if items:
+            return items
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        _log_provider_failure("Google Books", exc)
+
+    try:
+        items = await _gutendex_search(query, limit)
+        if items:
+            return items
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        _log_provider_failure("Project Gutenberg", exc)
+
+    try:
+        return await _open_library_search(query, limit)
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        _log_provider_failure("Open Library", exc)
+        return {"error": "Book search is temporarily unavailable. Please try again shortly."}
 
 
 async def by_genre(genre: str, limit: int = 40):
-    """Google Books subject search doubles as genre-based discovery."""
-    params = {"q": f"subject:{genre}", "maxResults": min(limit, 40), "orderBy": "relevance"}
-    if GOOGLE_BOOKS_API_KEY:
-        params["key"] = GOOGLE_BOOKS_API_KEY
-
+    genre = str(genre or "fiction").strip() or "fiction"
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-            resp = await client.get(GOOGLE_BOOKS_URL, params=params)
-            resp.raise_for_status()
-            data = resp.json()
-        items = [_format_google_item(r) for r in data.get("items", [])]
+        items = await _google_search(f"subject:{genre}", limit, orderBy="relevance")
         if items:
             return items
-    except httpx.HTTPError:
-        pass
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        _log_provider_failure("Google Books", exc)
 
-    # Fall back to free/legal public-domain results if the genre search
-    # comes back empty or Google Books is unreachable.
+    try:
+        items = await _gutendex_topic(genre, limit)
+        if items:
+            return items
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        _log_provider_failure("Project Gutenberg", exc)
+
+    try:
+        items = await _open_library_search(f"subject:{genre}", limit)
+        if items:
+            return items
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        _log_provider_failure("Open Library", exc)
+
     return await free_legal_popular(limit)
 
 
 async def free_legal_search(query: str, limit: int = 20):
-    """Public-domain / free-to-read full texts (legal) via Project Gutenberg."""
+    """Public-domain/full-text results, with Open Library public scans as backup."""
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-            resp = await client.get(GUTENDEX_URL, params={"search": query})
-            resp.raise_for_status()
-            data = resp.json()
-        return [_format_gutenberg_item(r) for r in data.get("results", [])[:limit]]
-    except httpx.HTTPError:
-        return {"error": "Project Gutenberg is temporarily unreachable. Try again in a moment."}
+        items = await _gutendex_search(query, limit)
+        if items:
+            return items
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        _log_provider_failure("Project Gutenberg", exc)
+
+    try:
+        items = await _open_library_search(query, limit, public_only=True)
+        if items:
+            return items
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        _log_provider_failure("Open Library", exc)
+        return {"error": "Free book search is temporarily unavailable. Please try again shortly."}
+    return []
 
 
 async def free_legal_popular(limit: int = 40):
-    """Most-downloaded public domain books — better for a trending/explore feed."""
+    """Popular public-domain books; fall back to public scans in Open Library."""
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-            resp = await client.get(GUTENDEX_URL, params={"sort": "popular"})
-            resp.raise_for_status()
-            data = resp.json()
-        return [_format_gutenberg_item(r) for r in data.get("results", [])[:limit]]
-    except httpx.HTTPError:
-        return {"error": "Project Gutenberg is temporarily unreachable. Try again in a moment."}
+        data = await _get_json(GUTENDEX_URL, {"sort": "popular"})
+        rows = data.get("results", [])
+        items = [_format_gutenberg_item(row) for row in rows[:limit] if isinstance(row, dict)]
+        if items:
+            return items
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        _log_provider_failure("Project Gutenberg", exc)
+
+    try:
+        items = await _open_library_search("subject:fiction", limit, public_only=True)
+        if items:
+            return items
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        _log_provider_failure("Open Library", exc)
+        return {"error": "Novel suggestions are temporarily unavailable. Please try again shortly."}
+    return []
 
 
-def _format_google_item(r: dict):
-    info = r.get("volumeInfo", {})
-    sale = r.get("saleInfo", {})
-    book_id = r.get("id")
-    link = sale.get("buyLink") or info.get("previewLink") or info.get("infoLink") \
+def _format_google_item(row: dict):
+    info = row.get("volumeInfo") or {}
+    sale = row.get("saleInfo") or {}
+    book_id = row.get("id")
+    link = (
+        sale.get("buyLink")
+        or info.get("previewLink")
+        or info.get("infoLink")
         or (f"https://books.google.com/books?id={book_id}" if book_id else None)
+    )
+    image_links = info.get("imageLinks") or {}
+    image = image_links.get("thumbnail") or image_links.get("smallThumbnail")
     return {
         "id": book_id,
         "domain": "novels",
-        "title": info.get("title"),
+        "title": info.get("title") or "Untitled book",
         "authors": info.get("authors", []),
         "overview": info.get("description"),
-        "image": (info.get("imageLinks") or {}).get("thumbnail"),
+        "image": image,
         "rating": info.get("averageRating"),
         "genres": info.get("categories", []),
         "buy_link": sale.get("buyLink"),
         "preview_link": info.get("previewLink"),
         "is_free": sale.get("saleability") == "FREE",
         "site_url": link,
+        "source": "Google Books",
     }
 
 
-def _format_gutenberg_item(r: dict):
-    gid = r.get("id")
-    read_link = r.get("formats", {}).get("text/html") \
-        or r.get("formats", {}).get("application/epub+zip") \
-        or (f"https://www.gutenberg.org/ebooks/{gid}" if gid else None)
+def _format_gutenberg_item(row: dict):
+    book_id = row.get("id")
+    formats = row.get("formats") or {}
+    authors = [
+        author.get("name") for author in row.get("authors", [])
+        if isinstance(author, dict) and author.get("name")
+    ]
+    read_link = (
+        formats.get("text/html")
+        or formats.get("application/epub+zip")
+        or (f"https://www.gutenberg.org/ebooks/{book_id}" if book_id else None)
+    )
     return {
-        "id": gid,
+        "id": book_id,
         "domain": "novels",
-        "title": r.get("title"),
-        "authors": [a["name"] for a in r.get("authors", [])],
-        "genres": r.get("subjects", [])[:5],
-        "image": r.get("formats", {}).get("image/jpeg"),
+        "title": row.get("title") or "Untitled book",
+        "authors": authors,
+        "genres": (row.get("subjects") or [])[:5],
+        "image": formats.get("image/jpeg"),
         "read_link": read_link,
+        "site_url": read_link,
         "is_free": True,
         "source": "Project Gutenberg (public domain, free & legal)",
+    }
+
+
+def _format_open_library_item(row: dict):
+    key = row.get("key")
+    site_url = f"https://openlibrary.org{key}" if key else "https://openlibrary.org"
+    cover_id = row.get("cover_i")
+    public_scan = bool(row.get("public_scan_b"))
+    return {
+        "id": key or row.get("title"),
+        "domain": "novels",
+        "title": row.get("title") or "Untitled book",
+        "authors": row.get("author_name") or [],
+        "overview": None,
+        "image": f"https://covers.openlibrary.org/b/id/{cover_id}-M.jpg" if cover_id else None,
+        "rating": None,
+        "genres": (row.get("subject") or [])[:5],
+        "is_free": public_scan,
+        "read_link": site_url if public_scan else None,
+        "site_url": site_url,
+        "source": "Open Library",
+        "first_publish_year": row.get("first_publish_year"),
     }
