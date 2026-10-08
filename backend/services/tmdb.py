@@ -14,7 +14,7 @@ def _headers():
     return {"Authorization": f"Bearer {TMDB_API_KEY}"}
 
 
-async def search(query: str, media_type: str = "multi", limit: int = 10):
+async def search(query: str, media_type: str = "multi", limit: int = 20):
     """media_type: 'movie', 'tv', or 'multi'"""
     if not TMDB_API_KEY:
         return {"error": "TMDB_API_KEY not set. Add it to backend/.env"}
@@ -30,7 +30,7 @@ async def search(query: str, media_type: str = "multi", limit: int = 10):
     return [_format_item(r) for r in data.get("results", [])[:limit]]
 
 
-async def trending(media_type: str = "all", window: str = "week", limit: int = 20):
+async def trending(media_type: str = "all", window: str = "week", limit: int = 40):
     if not TMDB_API_KEY:
         return {"error": "TMDB_API_KEY not set. Add it to backend/.env"}
 
@@ -45,7 +45,7 @@ async def trending(media_type: str = "all", window: str = "week", limit: int = 2
     return [_format_item(r) for r in data.get("results", [])[:limit]]
 
 
-async def discover_by_genre(genre_ids: list[int], media_type: str = "movie", limit: int = 20):
+async def discover_by_genre(genre_ids: list[int], media_type: str = "movie", limit: int = 40):
     """genre_ids: TMDB numeric genre ids the user prefers"""
     if not TMDB_API_KEY:
         return {"error": "TMDB_API_KEY not set. Add it to backend/.env"}
@@ -88,8 +88,9 @@ async def get_watch_providers(item_id: int, media_type: str, country: str = "US"
 def _format_item(r: dict):
     title = r.get("title") or r.get("name")
     media_type = r.get("media_type") or ("movie" if "title" in r else "tv")
+    item_id = r.get("id")
     return {
-        "id": r.get("id"),
+        "id": item_id,
         "domain": "movies" if media_type == "movie" else "series",
         "title": title,
         "overview": r.get("overview"),
@@ -98,4 +99,6 @@ def _format_item(r: dict):
         "genre_ids": r.get("genre_ids", []),
         "tmdb_media_type": media_type,
         "free_legal_hint": FREE_LEGAL_STREAMING_HINTS,
+        # Guaranteed clickable link to the title's TMDB page
+        "site_url": f"https://www.themoviedb.org/{media_type}/{item_id}" if item_id else None,
     }

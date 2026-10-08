@@ -9,7 +9,7 @@ BASE_URL = "https://comicvine.gamespot.com/api"
 HEADERS = {"User-Agent": "EntertainmentRecommender/1.0"}
 
 
-async def search(query: str, limit: int = 20):
+async def search(query: str, limit: int = 40):
     if not COMICVINE_API_KEY:
         return {"error": "COMICVINE_API_KEY not set. Add it to backend/.env"}
 
@@ -30,13 +30,16 @@ async def search(query: str, limit: int = 20):
 
 
 def _format_item(r: dict):
+    item_id = r.get("id")
+    link = r.get("site_detail_url") or (f"https://comicvine.gamespot.com/volume/4050-{item_id}/" if item_id else None)
     return {
-        "id": r.get("id"),
+        "id": item_id,
         "domain": "comics",
         "title": r.get("name"),
         "overview": r.get("description"),
         "image": (r.get("image") or {}).get("medium_url"),
         "publisher": (r.get("publisher") or {}).get("name"),
         "start_year": r.get("start_year"),
-        "site_url": r.get("site_detail_url"),
+        # Guaranteed clickable link
+        "site_url": link,
     }

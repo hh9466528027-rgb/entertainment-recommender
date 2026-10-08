@@ -8,7 +8,7 @@ from config import RAWG_API_KEY
 BASE_URL = "https://api.rawg.io/api"
 
 
-async def search(query: str, limit: int = 10):
+async def search(query: str, limit: int = 20):
     if not RAWG_API_KEY:
         return {"error": "RAWG_API_KEY not set. Add it to backend/.env"}
 
@@ -21,7 +21,7 @@ async def search(query: str, limit: int = 10):
     return [_format_item(r) for r in data.get("results", [])]
 
 
-async def popular(limit: int = 20):
+async def popular(limit: int = 40):
     if not RAWG_API_KEY:
         return {"error": "RAWG_API_KEY not set. Add it to backend/.env"}
 
@@ -35,7 +35,7 @@ async def popular(limit: int = 20):
     return [_format_item(r) for r in data.get("results", [])]
 
 
-async def by_genre(genre_slugs: list[str], limit: int = 20):
+async def by_genre(genre_slugs: list[str], limit: int = 40):
     if not RAWG_API_KEY:
         return {"error": "RAWG_API_KEY not set. Add it to backend/.env"}
 
@@ -55,8 +55,10 @@ async def by_genre(genre_slugs: list[str], limit: int = 20):
 
 
 def _format_item(r: dict):
+    item_id = r.get("id")
+    slug = r.get("slug")
     return {
-        "id": r.get("id"),
+        "id": item_id,
         "domain": "games",
         "title": r.get("name"),
         "image": r.get("background_image"),
@@ -65,4 +67,6 @@ def _format_item(r: dict):
         "genre_slugs": [g["slug"] for g in r.get("genres", [])],
         "platforms": [p["platform"]["name"] for p in r.get("platforms", []) or []],
         "stores": [s["store"]["name"] for s in r.get("stores", []) or []],
+        # Guaranteed clickable link to the game's RAWG page
+        "site_url": f"https://rawg.io/games/{slug or item_id}" if (slug or item_id) else None,
     }

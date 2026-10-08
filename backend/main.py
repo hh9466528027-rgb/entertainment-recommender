@@ -28,23 +28,33 @@ async def root():
     return {"status": "ok", "domains": DOMAINS}
 
 
+def _tag_explore(items, label: str):
+    """Explore is non-personalized, but every item should still say *why*
+    it's showing up, instead of leaving the card blank."""
+    if isinstance(items, dict):  # error dict (missing key, etc.)
+        return items
+    for it in items:
+        it.setdefault("why", f"🔥 Trending in {label} right now")
+    return items
+
+
 # ---------------------------------------------------------------------------
 # EXPLORE — trending / popular, no personalization required
 # ---------------------------------------------------------------------------
 @app.get("/explore/{domain}")
 async def explore(domain: str):
     if domain == "movies":
-        return await tmdb.trending(media_type="movie")
+        return _tag_explore(await tmdb.trending(media_type="movie"), "Movies")
     if domain == "series":
-        return await tmdb.trending(media_type="tv")
+        return _tag_explore(await tmdb.trending(media_type="tv"), "Series")
     if domain == "anime":
-        return await anilist.top()
+        return _tag_explore(await anilist.top(), "Anime")
     if domain == "games":
-        return await rawg.popular()
+        return _tag_explore(await rawg.popular(), "Games")
     if domain == "novels":
-        return await books.free_legal_popular()
+        return _tag_explore(await books.free_legal_popular(), "Novels")
     if domain == "comics":
-        return await comicvine.search("Batman")  # seed query; Comic Vine has no generic "trending"
+        return _tag_explore(await comicvine.search("Batman"), "Comics")  # seed query; Comic Vine has no generic "trending"
     if domain == "music":
         return {"error": "Music recommendations are temporarily unavailable — Spotify requires a Premium developer account for API access."}
     raise HTTPException(404, f"Unknown domain: {domain}")

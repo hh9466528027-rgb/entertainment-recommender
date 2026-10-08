@@ -63,17 +63,17 @@ async def _run(query: str, variables: dict):
     return data.get("data", {}).get("Page", {}).get("media", [])
 
 
-async def search(query: str, limit: int = 10):
+async def search(query: str, limit: int = 20):
     media = await _run(_SEARCH_QUERY, {"search": query, "perPage": limit})
     return [_format_item(m) for m in media]
 
 
-async def top(limit: int = 20):
+async def top(limit: int = 40):
     media = await _run(_TOP_QUERY, {"perPage": limit})
     return [_format_item(m) for m in media]
 
 
-async def by_genre(genre_names: list[str], limit: int = 20):
+async def by_genre(genre_names: list[str], limit: int = 40):
     # AniList genre names match ours directly (Action, Comedy, Drama, Fantasy,
     # Romance, Sci-Fi, Slice of Life, Supernatural, etc.) — no id mapping needed.
     media = await _run(_GENRE_QUERY, {"genres": genre_names, "perPage": limit})
@@ -91,5 +91,5 @@ def _format_item(m: dict):
         "rating": (m.get("averageScore") or 0) / 10 if m.get("averageScore") else None,
         "genres": m.get("genres", []),
         "genre_ids": m.get("genres", []),  # AniList uses names, not numeric ids
-        "url": m.get("siteUrl"),
+        "site_url": m.get("siteUrl"),
     }
