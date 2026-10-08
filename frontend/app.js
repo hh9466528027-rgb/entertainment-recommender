@@ -87,6 +87,10 @@ function ratingLabel(value) {
   return `${Number(value).toFixed(1)} / ${ratingScale()}`;
 }
 function recommendationReason(item) {
+  if (state.activeDomain === "music" && state.view === "explore") {
+    const genre = itemGenres(item)[0];
+    if (genre) return `Catalog genre: ${genre}`;
+  }
   const why = plainText(item.why);
   const generic = !why || /trending pick you might enjoy|popular right now|recommended for you/i.test(why);
   if (!generic) return why;
