@@ -320,10 +320,13 @@ function renderCard(item, index) {
   const genres = itemGenres(item).slice(0, 2);
   const rating = ratingLabel(item.rating);
   const domain = domainInfo();
-  const source = item.free_legal_hint?.length ? `Availability varies · ${item.free_legal_hint.slice(0, 2).join(", ")}`
-    : item.streaming?.length ? `Streaming: ${item.streaming.slice(0, 2).join(", ")}`
-    : item.stores?.length ? `Stores: ${item.stores.slice(0, 2).join(", ")}`
-    : item.platforms?.length ? item.platforms.slice(0, 2).join(" · ") : "Open for details";
+  const musicCredits = Array.isArray(item.artists) ? item.artists.filter(Boolean).slice(0, 2) : [];
+  const source = domain.key === "music"
+    ? ([musicCredits.join(", "), item.album].filter(Boolean).join(" · ") || "Music pick")
+    : item.free_legal_hint?.length ? `Availability varies · ${item.free_legal_hint.slice(0, 2).join(", ")}`
+      : item.streaming?.length ? `Streaming: ${item.streaming.slice(0, 2).join(", ")}`
+        : item.stores?.length ? `Stores: ${item.stores.slice(0, 2).join(", ")}`
+          : item.platforms?.length ? item.platforms.slice(0, 2).join(" · ") : "Open for details";
   return `<article class="card" style="--card-index:${Math.min(index, 12)}">
     <button class="card-open" type="button" data-index="${index}" aria-label="View details for ${escapeHTML(title)}">
       <span class="card-art">${image ? `<img class="card-image" src="${escapeHTML(image)}" alt="" loading="lazy" />` : `<span class="image-fallback" aria-hidden="true">${escapeHTML(domain.label.split(" ").at(-1))}</span>`}<span class="art-overlay" aria-hidden="true">View details <span>↗</span></span>${rating ? `<span class="rating-pill">★ ${escapeHTML(rating)}</span>` : ""}</span>
@@ -333,14 +336,21 @@ function renderCard(item, index) {
 
 function detailsLinks(item) {
   const links = [];
+  const provider = String(item.provider || "").toLowerCase();
+  const listenLabel = provider.includes("apple") ? "Open in Apple Music" : provider.includes("spotify") ? "Open in Spotify" : "Listen";
   const candidates = [
-    ["Listen", item.listen_link], ["Read free", item.read_link], ["Get the book", item.buy_link],
+    [listenLabel, item.listen_link], ["Read free", item.read_link], ["Get the book", item.buy_link],
     ["Official / reference page", item.site_url], ["Anime reference", item.url], ["Preview", item.preview_link],
   ];
   candidates.forEach(([label, rawURL]) => {
     const href = safeURL(rawURL);
     if (href && !links.some(link => link.href === href)) links.push({ label, href });
   });
+  if (state.activeDomain === "music") {
+    const artists = Array.isArray(item.artists) ? item.artists.join(" ") : "";
+    const query = encodeURIComponent(`${plainText(item.title)} ${artists}`.trim());
+    links.push({ label: "Search on Gaana", href: `https://gaana.com/search/${query}` });
+  }
   if ((state.activeDomain === "movies" || state.activeDomain === "series") && item.id) {
     const kind = item.tmdb_media_type === "tv" || state.activeDomain === "series" ? "tv" : "movie";
     const href = `https://www.themoviedb.org/${kind}/${encodeURIComponent(item.id)}`;
@@ -362,13 +372,17 @@ function openDetails(index) {
   if (!item) return;
   const dialog = document.getElementById("details-dialog");
   const title = plainText(item.title) || "Untitled";
-  const synopsis = plainText(item.overview) || "A full description is not available yet.";
+  const synopsis = plainText(item.overview) || (state.activeDomain === "music" ? "" : "A full description is not available yet.");
   const genres = itemGenres(item);
   const rating = ratingLabel(item.rating);
   const image = safeURL(item.image);
+  const preview = state.activeDomain === "music" ? safeURL(item.preview_url) : "";
   const facts = [];
   if (item.start_year) facts.push(["Started", item.start_year]);
   if (item.publisher) facts.push(["Publisher", item.publisher]);
+  if (state.activeDomain === "music" && item.artists?.length) facts.push(["Artist", item.artists.join(", ")]);
+  if (state.activeDomain === "music" && item.album) facts.push(["Album", item.album]);
+  if (state.activeDomain === "music" && item.release_year) facts.push(["Released", item.release_year]);
   if (item.platforms?.length) facts.push(["Platforms", item.platforms.slice(0, 5).join(", ")]);
   if (item.stores?.length) facts.push(["Stores", item.stores.slice(0, 4).join(", ")]);
   const providers = [...new Set([...(item.free_legal_hint || []), ...(item.streaming || [])])];
@@ -377,9 +391,10 @@ function openDetails(index) {
     <div class="detail-copy"><p class="eyebrow">${escapeHTML(domainInfo().label)} ${rating ? `· ★ ${escapeHTML(rating)}` : ""}</p>
       <h2 id="detail-title">${escapeHTML(title)}</h2>
       <p class="detail-reason">✦ ${escapeHTML(recommendationReason(item))}</p>
-      <p class="detail-overview">${escapeHTML(synopsis)}</p>
+      ${synopsis ? `<p class="detail-overview">${escapeHTML(synopsis)}</p>` : ""}
       ${genres.length ? `<div class="detail-tags" aria-label="Genres">${genres.map(genre => `<span class="mini-tag">${escapeHTML(genre)}</span>`).join("")}</div>` : ""}
       ${facts.length ? `<dl class="detail-facts">${facts.map(([label, value]) => `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(value)}</dd></div>`).join("")}</dl>` : ""}
+      ${preview ? `<section class="music-preview" aria-label="Music preview"><p class="music-preview-label">30-second preview</p><audio id="music-preview-player" controls preload="metadata" src="${escapeHTML(preview)}" aria-label="Preview ${escapeHTML(title)}"></audio><small>Short sample provided by the music catalog. Full playback opens on the linked service.</small></section>` : ""}
       ${providers.length ? `<p class="availability-note"><strong>Availability suggestions:</strong> ${escapeHTML(providers.join(", "))}. Check your region and provider for current availability.</p>` : ""}
       <div class="detail-actions">${detailsLinks(item).map(link => `<a class="button button-primary" href="${escapeHTML(link.href)}" target="_blank" rel="noopener noreferrer">${escapeHTML(link.label)} <span aria-hidden="true">↗</span></a>`).join("")}</div>
     </div>`;
@@ -411,7 +426,11 @@ function initModal() {
   const dialog = document.getElementById("details-dialog");
   document.querySelector(".dialog-close").addEventListener("click", () => dialog.close?.());
   dialog.addEventListener("click", event => { if (event.target === dialog) dialog.close?.(); });
-  dialog.addEventListener("close", () => document.querySelector(".card-open")?.focus());
+  dialog.addEventListener("close", () => {
+    const preview = dialog.querySelector("#music-preview-player");
+    if (preview) { preview.pause(); preview.currentTime = 0; }
+    document.querySelector(".card-open")?.focus();
+  });
 }
 
 function render() {

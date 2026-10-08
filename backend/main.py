@@ -56,7 +56,7 @@ async def explore(domain: str):
     if domain == "comics":
         return _tag_explore(await comicvine.search("Batman"), "Comics")  # seed query; Comic Vine has no generic "trending"
     if domain == "music":
-        return {"error": "Music recommendations are temporarily unavailable — Spotify requires a Premium developer account for API access."}
+        return await spotify.explore()
     raise HTTPException(404, f"Unknown domain: {domain}")
 
 
@@ -83,7 +83,10 @@ async def for_me(domain: str, preferences: Preferences):
     elif domain == "comics":
         pool = await comicvine.search(genres[0] if genres else "superhero")
     elif domain == "music":
-        return {"error": "Music recommendations are temporarily unavailable — Spotify requires a Premium developer account for API access."}
+        favorites = [str(value).strip() for value in (prefs.get("favorites") or []) if str(value).strip()]
+        genre_seed = next((str(value).strip() for value in genres if str(value).strip()), "")
+        seed = favorites[0] if favorites else genre_seed or "pop"
+        pool = await spotify.by_artist_or_genre(seed, limit=20)
     else:
         raise HTTPException(404, f"Unknown domain: {domain}")
 
