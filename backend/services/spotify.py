@@ -177,7 +177,11 @@ async def explore(limit: int = 20):
     items = await search("pop", search_type="track", limit=limit)
     if isinstance(items, list):
         for item in items:
-            item.setdefault("why", "A pop pick to explore")
+            genres = item.get("genres") or []
+            if genres:
+                item.setdefault("why", f"Catalog genre: {genres[0]}")
+            else:
+                item.setdefault("why", "A match from the music catalog")
     return items
 
 

@@ -17,10 +17,16 @@ const TMDB_GENRES = {
   10767: "Talk", 10768: "War & Politics",
 };
 
+const initialPreferences = loadPreferences();
+const hasSavedTaste = Object.values(initialPreferences).some(preference =>
+  (Array.isArray(preference?.genres) && preference.genres.length > 0) ||
+  (Array.isArray(preference?.favorites) && preference.favorites.length > 0)
+);
+
 const state = {
-  preferences: loadPreferences(),
+  preferences: initialPreferences,
   onboardingDone: localStorage.getItem("onboarding_done") === "true",
-  view: "for-me",
+  view: hasSavedTaste ? "for-me" : "explore",
   activeDomain: "movies",
   items: [],
   visibleItems: [],
@@ -56,6 +62,13 @@ function canonicalGenre(value) {
   return genre;
 }
 function sameGenre(a, b) { return canonicalGenre(a) === canonicalGenre(b); }
+function matchesCatalogGenre(actual, selected) {
+  const actualGenre = canonicalGenre(actual);
+  const selectedGenre = canonicalGenre(selected);
+  if (actualGenre === selectedGenre) return true;
+  const aliases = { "hip hop rap": ["hip hop"], "hip hop": ["hip hop rap"] };
+  return (aliases[selectedGenre] || []).includes(actualGenre);
+}
 function domainInfo(key = state.activeDomain) { return DOMAINS.find(domain => domain.key === key) || DOMAINS[0]; }
 function selectedGenres() { return state.preferences[state.activeDomain]?.genres || []; }
 
@@ -214,19 +227,25 @@ async function loadResults() {
   if (!results) return;
   const requestId = ++state.requestId;
   const domain = state.activeDomain;
+  const selectedMusicGenre = domain === "music" && state.view === "explore" ? (state.filters.music?.genre || "") : "";
+  const genreSearch = Boolean(selectedMusicGenre);
   results.setAttribute("aria-busy", "true");
-  results.innerHTML = `<div class="loading-state"><span class="loader" aria-hidden="true"></span><p>Finding ${escapeHTML(domainInfo(domain).shortLabel.toLowerCase())} picks…</p></div>`;
+  const loadingText = genreSearch ? `Finding ${selectedMusicGenre} music…` : `Finding ${domainInfo(domain).shortLabel.toLowerCase()} picks…`;
+  results.innerHTML = `<div class="loading-state"><span class="loader" aria-hidden="true"></span><p>${escapeHTML(loadingText)}</p></div>`;
   try {
-    const options = state.view === "explore"
+    const options = state.view === "explore" || genreSearch
       ? {}
       : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(state.preferences[domain] || {}) };
-    const response = await fetch(`${API_BASE}/${state.view === "explore" ? "explore" : "for-me"}/${encodeURIComponent(domain)}`, options);
+    const url = genreSearch
+      ? `${API_BASE}/search/music?q=${encodeURIComponent(selectedMusicGenre)}&limit=50`
+      : `${API_BASE}/${state.view === "explore" ? "explore" : "for-me"}/${encodeURIComponent(domain)}`;
+    const response = await fetch(url, options);
     const payload = await response.json();
     if (requestId !== state.requestId) return;
     if (!response.ok) throw new Error(payload?.error || `The server returned ${response.status}.`);
     if (payload?.error) throw new Error(payload.error);
     if (!Array.isArray(payload)) throw new Error("The recommendations service returned an unexpected response.");
-    state.items = payload;
+    state.items = genreSearch ? catalogGenreResults(payload, selectedMusicGenre) : payload;
     renderResults();
   } catch (error) {
     if (requestId !== state.requestId) return;
@@ -236,16 +255,57 @@ async function loadResults() {
   }
 }
 
+function catalogGenreResults(items, genre) {
+  const hasGenreMetadata = items.some(item => itemGenres(item).length > 0);
+  const matches = hasGenreMetadata
+    ? items.filter(item => itemGenres(item).some(itemGenre => matchesCatalogGenre(itemGenre, genre)))
+    : items;
+  return matches.map(item => ({
+    ...item,
+    why: item.why || (hasGenreMetadata ? `Listed as ${genre} in the music catalog` : `Search result for ${genre}`),
+  }));
+}
+
+async function loadMusicGenreResults(genre) {
+  const results = document.getElementById("results");
+  const grid = document.getElementById("result-grid");
+  if (!results || !grid) return;
+  const requestId = ++state.requestId;
+  results.setAttribute("aria-busy", "true");
+  grid.hidden = false;
+  document.getElementById("filtered-empty").hidden = true;
+  grid.className = "grid";
+  grid.innerHTML = `<div class="genre-search-status" role="status">Searching the music catalog for <strong>${escapeHTML(genre)}</strong>…</div>`;
+  try {
+    const response = await fetch(`${API_BASE}/search/music?q=${encodeURIComponent(genre)}&limit=50`);
+    const payload = await response.json();
+    if (requestId !== state.requestId) return;
+    if (!response.ok) throw new Error(payload?.error || `The server returned ${response.status}.`);
+    if (payload?.error) throw new Error(payload.error);
+    if (!Array.isArray(payload)) throw new Error("The music catalog returned an unexpected response.");
+    state.items = catalogGenreResults(payload, genre);
+    results.setAttribute("aria-busy", "false");
+    renderFilteredItems();
+  } catch (error) {
+    if (requestId !== state.requestId) return;
+    results.setAttribute("aria-busy", "false");
+    grid.className = "grid";
+    grid.innerHTML = `<div class="genre-search-status" role="alert">${escapeHTML(error.message || "Could not load this genre.")} <button class="button button-secondary" id="retry-genre-search" type="button">Try again</button></div>`;
+    document.getElementById("retry-genre-search").addEventListener("click", () => loadMusicGenreResults(genre));
+  }
+}
+
 function renderResults() {
   const results = document.getElementById("results");
   if (!results) return;
   results.setAttribute("aria-busy", "false");
   const domain = domainInfo();
   results.innerHTML = `
-    <div class="shelf-heading"><div><p class="eyebrow">${state.view === "for-me" ? "CURATED FOR YOU" : "THE FULL COLLECTION"}</p><h2>${escapeHTML(domain.label)}</h2></div><span class="result-count" id="result-count"></span></div>
+    <div class="shelf-heading"><div><p class="eyebrow">${state.view === "for-me" ? "CURATED FOR YOU" : domain.key === "music" ? "BROWSE BY GENRE" : "THE FULL COLLECTION"}</p><h2>${escapeHTML(domain.label)}</h2></div><span class="result-count" id="result-count"></span></div>
+    ${domain.key === "music" ? `<p class="catalog-note">Genre labels follow the music catalog. Choose a genre to search that category beyond this starting mix.</p>` : ""}
     <section class="filter-panel" aria-label="Filter and sort recommendations">
       <label class="filter-search"><span class="sr-only">Search ${escapeHTML(domain.shortLabel)}</span><span class="search-icon" aria-hidden="true">⌕</span><input type="search" id="filter-search" placeholder="Search titles, stories, genres…" value="${escapeHTML(state.filters[domain.key]?.query || "")}" /></label>
-      <label class="filter-control"><span>Genre</span><select id="filter-genre"><option value="">All genres</option>${availableGenres().map(genre => `<option value="${escapeHTML(genre)}">${escapeHTML(genre)}</option>`).join("")}</select></label>
+      <label class="filter-control"><span>Genre</span><select id="filter-genre"><option value="">${domain.key === "music" ? "Popular mix" : "All genres"}</option>${availableGenres().map(genre => `<option value="${escapeHTML(genre)}">${escapeHTML(genre)}</option>`).join("")}</select></label>
       <label class="filter-control rating-filter"><span>Min rating <output id="rating-output">Any</output></span><input type="range" id="filter-rating" min="0" max="${ratingScale()}" step="0.5" value="${Number(state.filters[domain.key]?.minRating || 0)}" /></label>
       <label class="filter-control"><span>Sort by</span><select id="filter-sort"><option value="recommended">Recommended</option><option value="rating-desc">Top rated</option><option value="title-asc">Title A–Z</option></select></label>
       <button class="clear-filters" id="clear-filters" type="button">Reset</button>
@@ -258,6 +318,7 @@ function renderResults() {
   const range = document.getElementById("filter-rating");
   const output = document.getElementById("rating-output");
   const update = () => {
+    const previousGenre = state.filters[domain.key]?.genre || "";
     state.filters[domain.key] = {
       query: document.getElementById("filter-search").value,
       genre: document.getElementById("filter-genre").value,
@@ -266,25 +327,31 @@ function renderResults() {
     };
     output.value = Number(range.value) ? `${Number(range.value).toFixed(1)}+` : "Any";
     output.textContent = output.value;
+    if (domain.key === "music" && state.view === "explore" && previousGenre !== state.filters[domain.key].genre) {
+      if (state.filters[domain.key].genre) loadMusicGenreResults(state.filters[domain.key].genre);
+      else loadResults();
+      return;
+    }
     renderFilteredItems();
   };
   ["filter-search", "filter-genre", "filter-rating", "filter-sort"].forEach(id => document.getElementById(id).addEventListener(id === "filter-search" ? "input" : "change", update));
   range.addEventListener("input", update);
-  document.getElementById("clear-filters").addEventListener("click", () => {
+  const resetFilters = () => {
     state.filters[domain.key] = {};
-    renderResults();
-  });
-  document.getElementById("empty-reset").addEventListener("click", () => {
-    state.filters[domain.key] = {};
-    renderResults();
-  });
+    if (domain.key === "music" && state.view === "explore") loadResults();
+    else renderResults();
+  };
+  document.getElementById("clear-filters").addEventListener("click", resetFilters);
+  document.getElementById("empty-reset").addEventListener("click", resetFilters);
   output.value = Number(range.value) ? `${Number(range.value).toFixed(1)}+` : "Any";
   output.textContent = output.value;
   renderFilteredItems();
 }
 
 function availableGenres() {
-  return [...new Set(state.items.flatMap(itemGenres))].sort((a, b) => a.localeCompare(b));
+  const genres = state.items.flatMap(itemGenres);
+  if (state.activeDomain === "music") genres.push("Bollywood", "Dance", "Hip-Hop", "Hip-Hop/Rap", "Indian", "Indian Pop", "Pop", "Punjabi", "Punjabi Pop", "R&B/Soul", "Rock", "Soundtrack");
+  return [...new Set(genres)].sort((a, b) => a.localeCompare(b));
 }
 function renderFilteredItems() {
   const domain = domainInfo();
@@ -306,7 +373,24 @@ function renderFilteredItems() {
   const empty = document.getElementById("filtered-empty");
   grid.hidden = items.length === 0;
   empty.hidden = items.length !== 0;
-  grid.innerHTML = items.map(renderCard).join("");
+  if (domain.key === "music" && !filters.genre) {
+    const groups = new Map();
+    items.forEach((item, index) => {
+      const genre = itemGenres(item)[0] || "Other";
+      if (!groups.has(genre)) groups.set(genre, []);
+      groups.get(genre).push({ item, index });
+    });
+    const orderedGroups = [...groups.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+    grid.className = "result-collection";
+    grid.innerHTML = orderedGroups.map(([genre, entries]) => `
+      <section class="genre-shelf" aria-label="${escapeHTML(genre)} music">
+        <div class="genre-shelf-heading"><h3>${escapeHTML(genre)}</h3><span>${entries.length} ${entries.length === 1 ? "track" : "tracks"}</span></div>
+        <div class="grid genre-shelf-grid">${entries.map(({ item, index }) => renderCard(item, index)).join("")}</div>
+      </section>`).join("");
+  } else {
+    grid.className = "grid";
+    grid.innerHTML = items.map(renderCard).join("");
+  }
   grid.querySelectorAll(".card-open").forEach(button => button.addEventListener("click", () => openDetails(Number(button.dataset.index))));
   grid.querySelectorAll(".card-image").forEach(image => image.addEventListener("error", () => {
     image.hidden = true;

@@ -97,7 +97,7 @@ async def for_me(domain: str, preferences: Preferences):
 
 
 @app.get("/search/{domain}")
-async def search(domain: str, q: str):
+async def search(domain: str, q: str, limit: int = 20):
     if domain == "movies":
         return await tmdb.search(q, media_type="movie")
     if domain == "series":
@@ -111,7 +111,7 @@ async def search(domain: str, q: str):
     if domain == "comics":
         return await comicvine.search(q)
     if domain == "music":
-        return await spotify.search(q, search_type="track")
+        return await spotify.search(q, search_type="track", limit=limit)
     raise HTTPException(404, f"Unknown domain: {domain}")
 
 
