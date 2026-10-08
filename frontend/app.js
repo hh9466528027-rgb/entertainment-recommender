@@ -8,6 +8,9 @@ const DOMAINS = [
   { key: "comics", label: "💥 Comics", shortLabel: "Comics", genres: ["Superhero", "Fantasy", "Horror", "Sci-Fi", "Crime"] },
 ];
 
+// Apple's Search API permits up to 200 results per request.
+const MUSIC_SEARCH_RESULT_LIMIT = 200;
+
 const TMDB_GENRES = {
   28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy", 80: "Crime",
   99: "Documentary", 18: "Drama", 10751: "Family", 14: "Fantasy", 36: "History",
@@ -241,7 +244,7 @@ async function loadResults() {
       ? {}
       : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(state.preferences[domain] || {}) };
     const url = genreSearch
-      ? `${API_BASE}/search/music?q=${encodeURIComponent(selectedMusicGenre)}&limit=50`
+      ? `${API_BASE}/search/music?q=${encodeURIComponent(selectedMusicGenre)}&limit=${MUSIC_SEARCH_RESULT_LIMIT}`
       : `${API_BASE}/${state.view === "explore" ? "explore" : "for-me"}/${encodeURIComponent(domain)}`;
     const response = await fetch(url, options);
     const payload = await response.json();
@@ -281,7 +284,7 @@ async function loadMusicGenreResults(genre) {
   grid.className = "grid";
   grid.innerHTML = `<div class="genre-search-status" role="status">Searching the music catalog for <strong>${escapeHTML(genre)}</strong>…</div>`;
   try {
-    const response = await fetch(`${API_BASE}/search/music?q=${encodeURIComponent(genre)}&limit=50`);
+    const response = await fetch(`${API_BASE}/search/music?q=${encodeURIComponent(genre)}&limit=${MUSIC_SEARCH_RESULT_LIMIT}`);
     const payload = await response.json();
     if (requestId !== state.requestId) return;
     if (!response.ok) throw new Error(payload?.error || `The server returned ${response.status}.`);

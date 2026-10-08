@@ -101,12 +101,12 @@ async def _spotify_search(query, search_type, limit):
     return [_format_spotify_item(item, search_type) for item in items]
 
 
-async def _apple_search(query, search_type="track", limit=20):
+async def _apple_search(query, search_type="track", limit=200):
     query = str(query or "").strip()
     if not query:
         return {"error": "Enter a song, artist, or genre to search for music."}
 
-    limit = max(1, min(int(limit), 50))
+    limit = max(1, min(int(limit), 200))
     entity = {"track": "song", "artist": "musicArtist", "album": "album"}.get(search_type, "song")
     key = (query.casefold(), entity, limit, APPLE_COUNTRY)
     cached = _cache_read(key)
@@ -152,14 +152,22 @@ async def _apple_search(query, search_type="track", limit=20):
         return {"error": "Music recommendations are temporarily unavailable. Please try again shortly."}
 
 
-async def search(query: str, search_type: str = "track", limit: int = 20):
-    """Search Spotify first when configured; otherwise use Apple's public catalog."""
+async def search(query: str, search_type: str = "track", limit: int = 200):
+    """Search large requests through Apple's catalog; use Spotify for small requests or as fallback."""
     query = str(query or "").strip()
     if not query:
         return {"error": "Enter a song, artist, or genre to search for music."}
 
-    limit = max(1, min(int(limit), 50))
+    limit = max(1, min(int(limit), 200))
     normalized_type = search_type if search_type in {"track", "artist", "album"} else "track"
+    apple_items = None
+    # Spotify's Search endpoint caps each request at 10 results. Prefer Apple's
+    # larger supported result set when the caller asks for more than that.
+    if limit > 10:
+        apple_items = await _apple_search(query, normalized_type, limit)
+        if isinstance(apple_items, list) and apple_items:
+            return apple_items
+
     try:
         spotify_items = await _spotify_search(query, normalized_type, limit)
         if spotify_items:
@@ -169,10 +177,12 @@ async def search(query: str, search_type: str = "track", limit: int = 20):
         # the public Apple catalog fallback.
         logger.info("Spotify unavailable (%s); using Apple fallback", type(exc).__name__)
 
+    if apple_items is not None:
+        return apple_items
     return await _apple_search(query, normalized_type, limit)
 
 
-async def explore(limit: int = 20):
+async def explore(limit: int = 200):
     """Offer a broad pop starting shelf when the user has not supplied favorites."""
     items = await search("pop", search_type="track", limit=limit)
     if isinstance(items, list):

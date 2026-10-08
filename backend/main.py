@@ -97,7 +97,7 @@ async def for_me(domain: str, preferences: Preferences):
 
 
 @app.get("/search/{domain}")
-async def search(domain: str, q: str, limit: int = 20):
+async def search(domain: str, q: str, limit: int = 200):
     if domain == "movies":
         return await tmdb.search(q, media_type="movie")
     if domain == "series":
