@@ -83,7 +83,7 @@ function renderOnboardingDomainBlock(d) {
         <div class="chip-row">
           <input type="text" id="music-favorites-input"
             placeholder="${d.favoritesLabel} (comma separated)"
-            style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:#0f1115; color:var(--text);" />
+            style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--bg); color:var(--text);" />
         </div>
       </div>
     `;
@@ -157,34 +157,59 @@ async function loadResults() {
   const resultsEl = document.getElementById("results");
   resultsEl.innerHTML = `<div class="loading">Loading ${state.activeDomain}…</div>`;
 
+  let res;
   try {
-    let items;
     if (state.view === "explore") {
-      const res = await fetch(`${API_BASE}/explore/${state.activeDomain}`);
-      items = await res.json();
+      res = await fetch(`${API_BASE}/explore/${state.activeDomain}`);
     } else {
       const prefs = state.preferences[state.activeDomain] || {};
-      const res = await fetch(`${API_BASE}/for-me/${state.activeDomain}`, {
+      res = await fetch(`${API_BASE}/for-me/${state.activeDomain}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(prefs),
       });
-      items = await res.json();
     }
-
-    if (items && items.error) {
-      resultsEl.innerHTML = `<div class="error-state">⚠️ ${items.error}</div>`;
-      return;
-    }
-    if (!Array.isArray(items) || items.length === 0) {
-      resultsEl.innerHTML = `<div class="empty-state">Nothing found yet — try adjusting genres or check back later.</div>`;
-      return;
-    }
-
-    resultsEl.innerHTML = `<div class="grid">${items.map(renderCard).join("")}</div>`;
   } catch (err) {
-    resultsEl.innerHTML = `<div class="error-state">Couldn't reach the backend. Is it running at ${API_BASE}? (${err.message})</div>`;
+    // The request never reached the server at all (DNS/network/CORS failure,
+    // or the backend is completely down / still waking up from sleep).
+    resultsEl.innerHTML = `
+      <div class="error-state">
+        ⚠️ Couldn't reach the backend at ${API_BASE}.<br/>
+        If it's hosted on a free plan, it may just be waking up — this can take 30–50 seconds.<br/>
+        <button class="secondary" style="margin-top:12px" onclick="loadResults()">Retry</button>
+      </div>`;
+    return;
   }
+
+  let items;
+  const rawText = await res.text();
+  try {
+    items = JSON.parse(rawText);
+  } catch {
+    // The server responded, but not with JSON — usually a crash on that one
+    // domain's data source. The backend itself is fine; this request wasn't.
+    resultsEl.innerHTML = `
+      <div class="error-state">
+        ⚠️ This section (${state.activeDomain}) hit a snag fetching live data — the backend itself is running fine.<br/>
+        <button class="secondary" style="margin-top:12px" onclick="loadResults()">Retry</button>
+      </div>`;
+    return;
+  }
+
+  if (items && items.error) {
+    resultsEl.innerHTML = `
+      <div class="error-state">
+        ⚠️ ${items.error}<br/>
+        <button class="secondary" style="margin-top:12px" onclick="loadResults()">Retry</button>
+      </div>`;
+    return;
+  }
+  if (!Array.isArray(items) || items.length === 0) {
+    resultsEl.innerHTML = `<div class="empty-state">Nothing found yet — try adjusting genres or check back later.</div>`;
+    return;
+  }
+
+  resultsEl.innerHTML = `<div class="grid">${items.map(renderCard).join("")}</div>`;
 }
 
 function renderCard(item) {
@@ -214,7 +239,7 @@ function renderAvailability(item) {
   if (item.listen_link) parts.push(`<a href="${item.listen_link}" target="_blank">▶ Listen on Spotify</a>`);
   if (item.read_link) parts.push(`<a href="${item.read_link}" target="_blank">📖 Read free (Gutenberg)</a>`);
   if (item.buy_link) parts.push(`<a href="${item.buy_link}" target="_blank">🛒 Get book</a>`);
-  if (item.site_url) parts.push(`<a href="${item.site_url}" target="_blank">ℹ️ Comic Vine page</a>`);
+  if (item.site_url) parts.push(`<a href="${item.site_url}" target="_blank">ℹ️ More info</a>`);
   if (item.url) parts.push(`<a href="${item.url}" target="_blank">ℹ️ MyAnimeList page</a>`);
   if (item.stores && item.stores.length) parts.push(`<div>🛒 ${item.stores.slice(0, 2).join(", ")}</div>`);
   if (item.streaming && item.streaming.length) parts.push(`<div>📡 ${item.streaming.slice(0, 2).join(", ")}</div>`);
