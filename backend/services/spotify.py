@@ -195,7 +195,7 @@ async def explore(limit: int = 200):
     return items
 
 
-async def by_artist_or_genre(seed: str, limit: int = 20):
+async def by_artist_or_genre(seed: str, limit: int = 200):
     """Search from a favorite artist or music preference."""
     return await search(str(seed or "pop"), search_type="track", limit=limit)
 

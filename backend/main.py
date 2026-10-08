@@ -86,7 +86,7 @@ async def for_me(domain: str, preferences: Preferences):
         favorites = [str(value).strip() for value in (prefs.get("favorites") or []) if str(value).strip()]
         genre_seed = next((str(value).strip() for value in genres if str(value).strip()), "")
         seed = favorites[0] if favorites else genre_seed or "pop"
-        pool = await spotify.by_artist_or_genre(seed, limit=20)
+        pool = await spotify.by_artist_or_genre(seed, limit=200)
     else:
         raise HTTPException(404, f"Unknown domain: {domain}")
 
