@@ -1,92 +1,50 @@
-# Deploying to Free Hosting (Render + Vercel)
+# Deployment and operations
 
-This gets your project onto a real public URL — no computer needs to stay
-running, anyone can visit it.
+## Current production deployment
 
----
+- **Frontend:** <https://entertainment-recommender-frontend.vercel.app/> (Vercel, static HTML/CSS/JavaScript; no build step).
+- **Backend:** <https://entertainment-recommender.onrender.com/> (Render FastAPI service).
+- **API documentation:** <https://entertainment-recommender.onrender.com/docs>.
+- **Source repository:** <https://github.com/hh9466528027-rgb/entertainment-recommender>.
 
-## Part 1 — Push the project to GitHub
+The Render service uses `backend/` as its root directory, installs `backend/requirements.txt`, and starts Uvicorn using the host-provided `$PORT`. Its current GitHub integration is configured for the `main` branch. `frontend/config.js` points the website at the production Render API by default.
 
-Both Render and Vercel deploy from a GitHub repo.
+## Required provider credentials
 
-1. Go to https://github.com → New repository → name it `entertainment-recommender` → Create
-2. In your project folder (the unzipped one), run:
-```bash
-git init
-git add .
-git commit -m "Initial commit"
-git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/entertainment-recommender.git
-git push -u origin main
-```
-(Replace `YOUR_USERNAME` with your actual GitHub username. If `git` isn't
-installed, download it from https://git-scm.com first.)
+Set credentials in **Render → the backend web service → Environment**. Never put values in frontend code, GitHub, or this document.
 
----
+| Environment variable | Used for | Required? |
+|---|---|---|
+| `TMDB_API_KEY` | Movies and series | Yes for TMDB-backed results |
+| `RAWG_API_KEY` | Games | Yes for RAWG-backed results |
+| `COMICVINE_API_KEY` | Comics | Yes for Comic Vine results |
+| `GOOGLE_BOOKS_API_KEY` | Google Books quota | Optional |
+| `SPOTIFY_CLIENT_ID` | Optional Spotify compatibility helpers | Optional |
+| `SPOTIFY_CLIENT_SECRET` | Optional Spotify compatibility helpers | Optional |
 
-## Part 2 — Deploy the backend (Render)
+AniList/Jikan, Deezer, and Apple/iTunes searches used by the app do not require a user login. The `.env.example` file contains blank placeholders. For local development, copy it to `backend/.env`; `.env` is ignored by Git.
 
-1. Go to https://render.com → sign up (free, can use GitHub login)
-2. Click **New +** → **Web Service**
-3. Connect your GitHub account, select the `entertainment-recommender` repo
-4. Render should detect `render.yaml` automatically and pre-fill settings.
-   If not, set manually:
-   - **Root Directory**: `backend`
-   - **Build Command**: `pip install -r requirements.txt`
-   - **Start Command**: `uvicorn main:app --host 0.0.0.0 --port $PORT`
-5. Under **Environment Variables**, add each of your API keys:
-   - `TMDB_API_KEY`
-   - `RAWG_API_KEY`
-   - `COMICVINE_API_KEY`
-   - `SPOTIFY_CLIENT_ID`
-   - `SPOTIFY_CLIENT_SECRET`
-   - `GOOGLE_BOOKS_API_KEY` (optional)
-6. Click **Create Web Service**. Wait for the build (2-5 min).
-7. Once live, copy your URL — looks like `https://entertainment-recommender-api.onrender.com`
-8. Test it: open `https://your-url.onrender.com/docs` in a browser — you
-   should see the API docs page.
+## Normal deployment updates
 
-> **Free tier note**: the backend "sleeps" after ~15 min of no traffic.
-> The first request after that takes 30-50 seconds to wake up — normal,
-> not a bug.
+1. Make and validate the intended source or documentation changes locally.
+2. Commit and push to the repository's `main` branch.
+3. Let the connected hosting services process the commit. Render is configured for automatic deploys; Vercel serves the static frontend from the repository's frontend project configuration.
+4. Verify the frontend URL, backend `/` health response, `/docs`, and affected category routes. For frontend changes, reload with a cache-busting query or hard refresh if a browser has cached older JavaScript.
 
----
+Documentation-only changes do not alter application behavior. Avoid changing `frontend/config.js`, `render.yaml`, or Render environment variables unless the deployment target or backend configuration actually needs to change.
 
-## Part 3 — Deploy the frontend (Vercel)
+## Safe credential rotation without planned downtime
 
-1. Open `frontend/config.js` and change the `API_BASE` line to your Render URL:
-   ```js
-   const API_BASE = "https://entertainment-recommender-api.onrender.com";
-   ```
-2. Commit and push this change:
-   ```bash
-   git add frontend/config.js
-   git commit -m "Point frontend to deployed backend"
-   git push
-   ```
-3. Go to https://vercel.com → sign up (free, can use GitHub login)
-4. Click **Add New** → **Project** → import your `entertainment-recommender` repo
-5. Set **Root Directory** to `frontend`
-6. Framework Preset: choose **Other** (it's plain HTML/JS, no build step needed)
-7. Click **Deploy**. Wait ~1 min.
-8. You'll get a live URL like `https://entertainment-recommender.vercel.app`
+A previously exposed credential should be considered compromised. **Rewriting Git history does not invalidate a leaked key.** To minimize impact on the live website:
 
----
+1. For each affected provider, create or obtain a replacement key while the old key is still valid, if that provider permits two active keys.
+2. Update the corresponding Render environment variable to the replacement and allow the backend to restart/deploy.
+3. Verify the affected production category and the API health route with the new key.
+4. Only then revoke the old key.
+5. If a provider invalidates the old key immediately when a replacement is issued, a zero-interruption rotation cannot be guaranteed by the application alone. Coordinate a maintenance window or confirm the provider’s overlap/rotation behavior before changing it.
 
-## Part 4 — Test the live site
+Do not send credentials in chat or add them to GitHub. If a credential is missing, keep the relevant category's current production value unchanged until a replacement can be entered securely.
 
-Visit your Vercel URL. It should load the onboarding screen, and Explore/For
-Me should pull real data from your Render-hosted backend.
+## Removing old values from Git history
 
-If something doesn't load, open your browser's developer console (F12) →
-Network tab → look for failed requests to your Render URL. Common causes:
-- Backend still "waking up" (wait 30-50 sec, refresh)
-- A typo in `API_BASE` in `config.js`
-- A missing API key in Render's environment variables
-
----
-
-## Updating the site later
-
-Any time you change code and push to GitHub (`git push`), both Render and
-Vercel automatically redeploy. No manual redeploy step needed.
+The current example file is sanitized, but past commits may still contain its earlier contents. Removing those historical copies requires rewriting Git history and force-pushing. That changes commit IDs and can require collaborators to re-clone; old clones, forks, and cached GitHub references may still retain the data. Rotate/revoke the actual credentials first, then decide whether to rewrite history and contact GitHub Support for cached references. Do not treat a history rewrite as a substitute for credential rotation.

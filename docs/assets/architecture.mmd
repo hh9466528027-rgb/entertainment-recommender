@@ -1,0 +1,8 @@
+flowchart LR
+  U["Visitor"] --> F["Browser frontend<br/>HTML · CSS · JavaScript"]
+  P[("Preferences<br/>localStorage")] --> F
+  F -->|HTTP requests| B["FastAPI backend<br/>routes · ranking · pagination"]
+  B --> S["Category service adapters"]
+  S --> X["Catalog APIs<br/>TMDB · AniList/Jikan · RAWG<br/>Books · Comic Vine · Deezer/Apple"]
+  X -->|normalized items + page data| B
+  B -->|JSON response| F

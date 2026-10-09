@@ -1,101 +1,114 @@
-# Cross-Domain Entertainment Recommender
+# Afterglow — Cross-Domain Entertainment Recommender
 
-Recommends movies, series, anime, music, games, novels, and comics from real,
-live external APIs — with a short "why this was suggested" line and
-availability links per item.
+Afterglow helps people discover entertainment across **movies, series, anime, music, games, novels, and comics** in one responsive website. Users can browse discovery feeds or personalize suggestions using favorite genres and artists.
 
-No database, no background jobs — everything is fetched on-demand. Your
-genre preferences are kept in the browser (localStorage) and sent to the
-backend with each request.
+- **Live website:** <https://entertainment-recommender-frontend.vercel.app/>
+- **Backend API:** <https://entertainment-recommender.onrender.com/>
+- **Interactive API docs:** <https://entertainment-recommender.onrender.com/docs>
+- **Project report:** [Markdown](docs/PROJECT_DOCUMENTATION.md) · [PDF](docs/PROJECT_DOCUMENTATION.pdf)
+- **Presentation Q&A handout:** [Anticipated questions and answers](docs/ANTICIPATED_QA.md)
 
----
+## Features
 
-## 1. Get free API keys (5–10 min, all free tiers)
+- Seven entertainment categories with search and discovery views.
+- Optional onboarding and editable taste preferences; preferences stay in the browser.
+- Content-based personalized ranking with a human-readable reason for each suggestion.
+- Search, genre and minimum-rating filters, sorting, and progressive **Load more** pagination.
+- Clickable cards with available artwork, synopsis, metadata, ratings, and provider links.
+- Music track previews when supplied by the catalog, plus listening and Gaana search links.
+- Dark/light themes, responsive styling, and animated visual details.
+- Provider adapters and fallbacks for selected categories.
 
-| Service | Used for | Get key at |
+Pagination fetches additional provider pages on demand. Results are not an unlimited download: every external catalog has its own coverage, rate limits, quotas, and maximum page range.
+
+## Technology and data sources
+
+| Layer | Technology | Responsibility |
 |---|---|---|
-| TMDB | Movies & Series | https://www.themoviedb.org/settings/api |
-| RAWG | Games | https://rawg.io/apidocs |
-| Comic Vine | Comics | https://comicvine.gamespot.com/api/ |
-| Spotify | Music | https://developer.spotify.com/dashboard (create an app, use Client ID + Secret) |
-| Jikan (anime) | — | **No key needed** |
-| Google Books / Gutenberg (novels) | — | **No key needed** for basic use |
+| Frontend | HTML5, CSS3, vanilla JavaScript | UI, preferences, filters, rendering, and API calls |
+| Backend | Python, FastAPI, Pydantic, HTTPX | Routes, provider calls, normalization, and recommendation scoring |
+| Hosting | Vercel and Render | Static frontend and FastAPI backend |
 
-## 2. Backend setup
+Category adapters use TMDB for movies and series; AniList with Jikan fallback for anime; RAWG for games; Google Books, Gutendex, and Open Library for novels; Comic Vine for comics; and Deezer with Apple/iTunes fallback for music. Music searches do not require Spotify credentials; optional Spotify compatibility settings remain available in the backend.
+
+## Recommendation approach
+
+The recommender is **rule-based**, not a trained machine-learning model. It rewards matching preferred genres, matching favorite/interest terms in descriptions, and favorite names found in titles or credits. Results include a short reason such as a matching genre or favorite artist. See the project report for the scoring formula and data flow.
+
+## Run locally
+
+### Backend
+
+Python 3.10 or newer is recommended.
 
 ```bash
 cd backend
-python -m venv venv
-source venv/bin/activate        # Windows: venv\Scripts\activate
+python -m venv .venv
+# macOS/Linux
+source .venv/bin/activate
+# Windows PowerShell: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-
 cp .env.example .env
-# open .env and paste in your API keys
+```
 
+Add only the API keys you need to `backend/.env`. TMDB, RAWG, and Comic Vine keys are used for their categories. A Google Books key is optional. AniList/Jikan, Deezer, and Apple/iTunes searches work without user credentials; Spotify credentials are optional for compatibility helpers.
+
+Run the API from the `backend` directory:
+
+```bash
 uvicorn main:app --reload --port 8000
 ```
 
-Backend now running at `http://127.0.0.1:8000`. Visit `/docs` in your
-browser for interactive API docs (Swagger UI) — good for testing endpoints
-directly before touching the frontend.
+Open <http://127.0.0.1:8000/docs> for the interactive API documentation.
 
-## 3. Frontend setup
+### Frontend
 
-No build step needed — plain HTML/CSS/JS.
+In a second terminal:
 
 ```bash
 cd frontend
 python -m http.server 5500
 ```
 
-Open `http://127.0.0.1:5500` in your browser.
+Open <http://127.0.0.1:5500>. The checked-in `frontend/config.js` uses the deployed Render API by default. To test against the local backend, change `API_BASE` to `http://127.0.0.1:8000`.
 
-> If your backend runs on a different host/port, edit `frontend/config.js`.
+## API routes
 
-## 4. Using the app
+- `GET /` — health check and supported categories.
+- `GET /explore/{domain}?page=1` — popular or discovery results.
+- `POST /for-me/{domain}?page=1` — personalized results.
+- `GET /search/{domain}?q=...&page=1` — category search.
 
-1. **Onboarding** — pick favorite genres per domain (all optional). Music
-   asks for favorite artists instead of genres. Skip entirely to land on
-   **Explore**.
-2. **For Me tab** — sub-tabs per domain, personalized using your saved
-   preferences. Click **"Edit genres"** (top right) anytime to change them.
-3. **Explore tab** — trending/popular items per domain, no personalization.
+Supported domain slugs: `movies`, `series`, `anime`, `music`, `games`, `novels`, and `comics`. Some page continuations also accept a `source` parameter so the next request stays with the provider used on the first page.
 
-## 5. Project structure
+## Project layout
 
-```
+```text
 backend/
-  main.py              FastAPI app — all routes
-  config.py            Loads API keys from .env
-  models.py            Request schemas
-  recommender.py        Genre-overlap scoring + "why" explanation logic
-  services/
-    tmdb.py            Movies & series
-    jikan.py           Anime & manga
-    rawg.py            Games
-    books.py           Novels (Google Books + Project Gutenberg)
-    comicvine.py       Comics
-    spotify.py         Music
+  main.py                 FastAPI routes and orchestration
+  models.py               Preference request models
+  recommender.py          Content scoring and explanations
+  services/               Category-specific provider adapters
 frontend/
-  index.html
-  app.js               All UI logic (onboarding, tabs, rendering)
-  style.css
-  config.js            API_BASE URL — change if needed
+  index.html               Application shell
+  app.js                   UI state, requests, filters, and rendering
+  style.css                Themes, layout, and animations
+  config.js                Backend API base URL
+docs/                      Project report and presentation Q&A
+render.yaml                Render service configuration
+DEPLOYMENT.md               Current hosting and deployment notes
 ```
 
-## 6. Notes & known limitations
+## Security and privacy
 
-- **No piracy sources**: Pikashow / NovelBin were intentionally excluded —
-  see `free_legal_hint` in movie/series results pointing to legal free
-  options (Tubi, Pluto TV, Crackle) instead.
-- **No official free public API for those apps' catalogs** — the
-  `free_legal_hint` is a static suggestion list, not a live catalog check.
-  If you want real per-title free-platform matching, JustWatch's unofficial
-  API is the closest option, but it's community-maintained and can break.
-- **Spotify** currently uses the Client Credentials flow (app-level search,
-  no personal login). To pull an actual user's listening history you'd
-  switch to the Authorization Code flow — that requires a user-facing OAuth
-  login screen, which can be added later.
-- **Recommendation logic** is straightforward genre-overlap scoring — easy
-  to understand and extend. Swapping in embeddings-based similarity later
-  is possible without changing the API shape.
+- Do not put API keys in frontend code, README examples, or Git.
+- Store production credentials in Render environment variables and local development credentials in the ignored `.env` file.
+- `backend/.env.example` intentionally contains blank placeholders. Never replace them with real values before committing.
+- Preferences and theme settings are stored in browser `localStorage`; there is no user account system or server-side preference database.
+- If a credential is ever committed to a public repository, treat it as exposed and rotate/revoke it. Removing a value from the latest file does not remove it from older Git commits.
+
+## Known limitations
+
+Results depend on external service availability, rate limits, and metadata completeness. Ratings are not standardized across providers. Music genre searches use catalog search behavior and may be less exact than formal genre tags. The recommender does not learn from clicks or listening history. Free-streaming availability hints are suggestions, not guaranteed title-by-title checks.
+
+The repository does not currently include a dedicated automated test suite; the project report includes a manual verification checklist and future testing recommendations.
