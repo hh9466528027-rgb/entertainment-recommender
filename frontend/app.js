@@ -446,10 +446,11 @@ function renderFilteredItems() {
   const domain = domainInfo();
   const filters = state.filters[domain.key] || {};
   const query = normalize(filters.query);
+  const musicGenreSearch = domain.key === "music" && state.view === "explore" && Boolean(state.pagination.genre);
   let items = state.items.filter(item => {
     const searchable = normalize([item.title, plainText(item.overview), item.publisher, ...itemGenres(item), ...(item.platforms || [])].join(" "));
     const queryMatches = !query || searchable.includes(query);
-    const genreMatches = !filters.genre || itemGenres(item).some(genre => normalize(genre) === normalize(filters.genre));
+    const genreMatches = !filters.genre || musicGenreSearch || itemGenres(item).some(genre => normalize(genre) === normalize(filters.genre));
     const rating = Number(item.rating);
     const ratingMatches = !Number(filters.minRating) || (Number.isFinite(rating) && rating >= Number(filters.minRating));
     return queryMatches && genreMatches && ratingMatches;
