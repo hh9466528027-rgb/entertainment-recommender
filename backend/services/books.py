@@ -165,6 +165,106 @@ async def free_legal_popular(limit: int = 40):
     return []
 
 
+def _book_page(items, page, has_more, total_results=None, source=None):
+    return {
+        "items": items,
+        "page": page,
+        "has_more": bool(has_more),
+        "total_results": total_results,
+        "source": source,
+    }
+
+
+async def _google_page(query: str, page: int, **extra):
+    page_size = 40
+    start = (page - 1) * page_size
+    data = await _get_json(
+        GOOGLE_BOOKS_URL,
+        _google_params(query, page_size, startIndex=start, **extra),
+    )
+    rows = data.get("items", [])
+    total = int(data.get("totalItems") or 0)
+    return _book_page(
+        [_format_google_item(row) for row in rows if isinstance(row, dict)],
+        page,
+        start + len(rows) < min(total, 1000),
+        total,
+        "google_books",
+    )
+
+
+async def _gutendex_page(params: dict, page: int):
+    data = await _get_json(GUTENDEX_URL, {**params, "page": page})
+    rows = data.get("results", [])
+    return _book_page(
+        [_format_gutenberg_item(row) for row in rows if isinstance(row, dict)],
+        page,
+        bool(data.get("next")),
+        data.get("count"),
+        "gutendex",
+    )
+
+
+async def _open_library_page(query: str, page: int, public_only: bool = False):
+    page_size = 40
+    offset = (page - 1) * page_size
+    data = await _get_json(
+        OPEN_LIBRARY_URL,
+        {"q": query, "offset": offset, "limit": page_size, "fields": OPEN_LIBRARY_FIELDS},
+    )
+    rows = data.get("docs", [])
+    items = [_format_open_library_item(row) for row in rows if isinstance(row, dict)]
+    if public_only:
+        items = [item for item in items if item.get("is_free")]
+    total = int(data.get("numFound", data.get("num_found", 0)) or 0)
+    return _book_page(items, page, offset + len(rows) < total, total, "open_library")
+
+
+async def _novel_page(query, page, source, mode, public_only=False):
+    if source:
+        providers = [source]
+    elif mode == "popular":
+        providers = ["gutendex", "open_library"]
+    else:
+        providers = ["google_books", "gutendex", "open_library"]
+    for provider in providers:
+        try:
+            if provider == "google_books" and mode != "popular":
+                google_query = f"subject:{query}" if mode == "genre" else query
+                result = await _google_page(google_query, page, orderBy="relevance")
+            elif provider == "gutendex":
+                params = {"sort": "popular"} if mode == "popular" else ({"topic": query} if mode == "genre" else {"search": query})
+                result = await _gutendex_page(params, page)
+            elif provider == "open_library":
+                ol_query = "subject:fiction" if mode == "popular" else (f"subject:{query}" if mode == "genre" else query)
+                result = await _open_library_page(ol_query, page, public_only=public_only)
+            else:
+                continue
+            if result["items"] or source:
+                return result
+        except (httpx.HTTPError, ValueError, TypeError) as exc:
+            _log_provider_failure(provider, exc)
+            if source:
+                break
+    return _book_page([], page, False, 0, source or providers[-1])
+
+
+async def search_page(query: str, page: int = 1, source=None):
+    query = str(query or "").strip()
+    if not query:
+        return {"error": "Enter a title or author to search for novels."}
+    return await _novel_page(query, page, source, "search")
+
+
+async def by_genre_page(genre: str, page: int = 1, source=None):
+    genre = str(genre or "fiction").strip() or "fiction"
+    return await _novel_page(genre, page, source, "genre")
+
+
+async def free_legal_popular_page(page: int = 1, source=None):
+    return await _novel_page("fiction", page, source, "popular", public_only=True)
+
+
 def _format_google_item(row: dict):
     info = row.get("volumeInfo") or {}
     sale = row.get("saleInfo") or {}

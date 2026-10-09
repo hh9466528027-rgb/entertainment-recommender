@@ -65,6 +65,56 @@ async def discover_by_genre(genre_ids: list[int], media_type: str = "movie", lim
     return [_format_item(r) for r in data.get("results", [])[:limit]]
 
 
+def _page_result(data: dict, page: int, max_pages: int = 500):
+    results = data.get("results", [])
+    total_pages = max(0, int(data.get("total_pages") or 0))
+    reachable_pages = min(total_pages, max_pages)
+    return {
+        "items": [_format_item(row) for row in results if isinstance(row, dict)],
+        "page": page,
+        "has_more": page < reachable_pages,
+        "total_pages": reachable_pages,
+        "total_results": data.get("total_results"),
+        "source": "tmdb",
+    }
+
+
+async def _get_page(path: str, params: dict, page: int, max_pages: int = 500):
+    if not TMDB_API_KEY:
+        return {"error": "TMDB_API_KEY not set. Add it to backend/.env"}
+    if page > max_pages:
+        return {"items": [], "page": page, "has_more": False, "total_pages": max_pages, "source": "tmdb"}
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{BASE_URL}/{path.lstrip('/')}",
+            params={"api_key": TMDB_API_KEY, "page": page, **params},
+        )
+        response.raise_for_status()
+        data = response.json()
+    return _page_result(data, page, max_pages)
+
+
+async def search_page(query: str, media_type: str = "movie", page: int = 1):
+    return await _get_page(
+        f"search/{media_type}", {"query": query, "include_adult": "false"}, page
+    )
+
+
+async def trending_page(media_type: str = "all", window: str = "week", page: int = 1):
+    return await _get_page(f"trending/{media_type}/{window}", {}, page, max_pages=1000)
+
+
+async def discover_page(genre_ids: list[int], media_type: str = "movie", page: int = 1):
+    return await _get_page(
+        f"discover/{media_type}",
+        {
+            "with_genres": ",".join(str(genre_id) for genre_id in genre_ids),
+            "sort_by": "popularity.desc",
+        },
+        page,
+    )
+
+
 async def get_watch_providers(item_id: int, media_type: str, country: str = "US"):
     """Returns where a title is legally available to watch (subscription/free/rent)."""
     if not TMDB_API_KEY:

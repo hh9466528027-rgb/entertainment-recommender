@@ -259,3 +259,157 @@ async def by_genre(genre_names: list[str], limit: int = 40):
         fallback_path,
         params,
     )
+
+
+_SEARCH_PAGE_QUERY = """
+query ($page: Int, $perPage: Int, $search: String) {
+  Page(page: $page, perPage: $perPage) {
+    pageInfo { currentPage hasNextPage total }
+    media(search: $search, type: ANIME) {
+      id title { romaji english } description(asHtml: false) genres averageScore
+      coverImage { large } siteUrl
+    }
+  }
+}
+"""
+_TOP_PAGE_QUERY = """
+query ($page: Int, $perPage: Int) {
+  Page(page: $page, perPage: $perPage) {
+    pageInfo { currentPage hasNextPage total }
+    media(type: ANIME, sort: POPULARITY_DESC) {
+      id title { romaji english } description(asHtml: false) genres averageScore
+      coverImage { large } siteUrl
+    }
+  }
+}
+"""
+_GENRE_PAGE_QUERY = """
+query ($page: Int, $perPage: Int, $genres: [String]) {
+  Page(page: $page, perPage: $perPage) {
+    pageInfo { currentPage hasNextPage total }
+    media(type: ANIME, genre_in: $genres, sort: POPULARITY_DESC) {
+      id title { romaji english } description(asHtml: false) genres averageScore
+      coverImage { large } siteUrl
+    }
+  }
+}
+"""
+
+
+def _page_result(items, page, has_more, total_results=None, source="anilist"):
+    return {
+        "items": items,
+        "page": page,
+        "has_more": bool(has_more),
+        "total_results": total_results,
+        "source": source,
+    }
+
+
+async def _run_page(query: str, variables: dict):
+    last_error = None
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(timeout=TIMEOUT, headers=HEADERS) as client:
+                response = await client.post(BASE_URL, json={"query": query, "variables": variables})
+                response.raise_for_status()
+                payload = response.json()
+            if payload.get("errors"):
+                raise ValueError("AniList returned a GraphQL error")
+            page_data = payload.get("data", {}).get("Page", {})
+            media = page_data.get("media", [])
+            if not isinstance(media, list):
+                raise ValueError("AniList returned an invalid media list")
+            return page_data
+        except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
+            last_error = exc
+            if attempt == 0:
+                await asyncio.sleep(0.35)
+    raise last_error or RuntimeError("AniList request failed")
+
+
+async def _jikan_page(path: str, params: dict, page: int):
+    async with httpx.AsyncClient(timeout=TIMEOUT, headers=HEADERS) as client:
+        response = await client.get(
+            f"{JIKAN_URL}/{path.lstrip('/')}",
+            params={**params, "page": page, "limit": min(int(params.get("limit", 25)), 25)},
+        )
+        response.raise_for_status()
+        payload = response.json()
+    rows = payload.get("data", [])
+    pagination = payload.get("pagination", {}) or {}
+    counts = pagination.get("items", {}) or {}
+    items = [_format_item(row) for row in rows if isinstance(row, dict)]
+    return _page_result(
+        items,
+        page,
+        pagination.get("has_next_page", False),
+        counts.get("total"),
+        source="jikan",
+    )
+
+
+async def _resolve_page(query, variables, fallback_path, fallback_params, page, source=None):
+    if source != "jikan":
+        try:
+            page_data = await _run_page(query, {**variables, "page": page, "perPage": 50})
+            page_info = page_data.get("pageInfo", {}) or {}
+            items = [_format_item(row) for row in page_data.get("media", []) if isinstance(row, dict)]
+            has_more = bool(page_info.get("hasNextPage"))
+            if items or has_more or source == "anilist":
+                return _page_result(items, page, has_more, page_info.get("total"), "anilist")
+        except Exception as exc:
+            if source == "anilist":
+                logger.warning("AniList page failed (%s)", type(exc).__name__)
+                return {"error": "Anime suggestions are temporarily unavailable. Please try again shortly."}
+            logger.warning("AniList page failed (%s); trying Jikan fallback", type(exc).__name__)
+    try:
+        return await _jikan_page(fallback_path, fallback_params, page)
+    except Exception as exc:
+        logger.warning("Jikan page failed (%s)", type(exc).__name__)
+        return {"error": "Anime suggestions are temporarily unavailable. Please try again shortly."}
+
+
+async def search_page(query: str, page: int = 1, source=None):
+    clean_query = str(query or "").strip()
+    if not clean_query:
+        return {"error": "Enter a title to search for anime."}
+    return await _resolve_page(
+        _SEARCH_PAGE_QUERY,
+        {"search": clean_query},
+        "anime",
+        {"q": clean_query, "limit": 25},
+        page,
+        source,
+    )
+
+
+async def top_page(page: int = 1, source=None):
+    return await _resolve_page(
+        _TOP_PAGE_QUERY,
+        {},
+        "top/anime",
+        {"order_by": "members", "sort": "desc", "limit": 25},
+        page,
+        source,
+    )
+
+
+async def by_genre_page(genre_names: list[str], page: int = 1, source=None):
+    genres = [str(name).strip() for name in (genre_names or []) if str(name).strip()]
+    if not genres:
+        return await top_page(page, source)
+    ids = [_JIKAN_GENRES[_normalize(name)] for name in genres if _normalize(name) in _JIKAN_GENRES]
+    fallback_path = "anime" if ids else "top/anime"
+    fallback_params = (
+        {"genres": ",".join(map(str, sorted(set(ids)))), "order_by": "members", "sort": "desc", "limit": 25}
+        if ids else {"order_by": "members", "sort": "desc", "limit": 25}
+    )
+    return await _resolve_page(
+        _GENRE_PAGE_QUERY,
+        {"genres": genres},
+        fallback_path,
+        fallback_params,
+        page,
+        source,
+    )

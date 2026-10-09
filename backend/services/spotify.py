@@ -1,8 +1,8 @@
-"""Music discovery using Spotify when configured, with Apple/iTunes fallback.
+"""Music discovery with Deezer pagination and Apple/iTunes fallback.
 
-Apple's public Search API supplies track metadata, artwork, store links, and
-30-second previews where available. Results are cached and calls are kept below
-Apple's documented approximate per-IP request rate.
+Deezer search supplies numeric pagination and 30-second previews. Apple/iTunes
+remains a resilient first-page fallback; older Spotify/Apple helper functions
+are kept for compatibility with existing callers.
 """
 import logging
 import os
@@ -198,6 +198,90 @@ async def explore(limit: int = 200):
 async def by_artist_or_genre(seed: str, limit: int = 200):
     """Search from a favorite artist or music preference."""
     return await search(str(seed or "pop"), search_type="track", limit=limit)
+
+
+DEEZER_SEARCH_URL = "https://api.deezer.com/search"
+DEEZER_PAGE_SIZE = 50
+
+
+def _format_deezer_item(item: dict):
+    album = item.get("album") or {}
+    artist = item.get("artist") or {}
+    title = item.get("title")
+    if not title:
+        return None
+    return {
+        "id": f"deezer-{item.get('id')}" if item.get("id") else title,
+        "domain": "music",
+        "title": title,
+        "artists": [artist["name"]] if artist.get("name") else [],
+        "album": album.get("title"),
+        "image": album.get("cover_xl") or album.get("cover_big") or album.get("cover_medium"),
+        "rating": None,
+        "genres": [],
+        "genre_ids": [],
+        "listen_link": item.get("link"),
+        "preview_url": item.get("preview"),
+        "provider": "Deezer",
+    }
+
+
+async def search_page(query: str, page: int = 1, source=None):
+    """Return one bounded, continuable music page; Apple search is a fallback."""
+    query = str(query or "").strip()
+    if not query:
+        return {"error": "Enter a song, artist, or genre to search for music."}
+
+    if source in (None, "deezer"):
+        offset = (page - 1) * DEEZER_PAGE_SIZE
+        try:
+            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, headers=HEADERS) as client:
+                response = await client.get(
+                    DEEZER_SEARCH_URL,
+                    params={"q": query, "limit": DEEZER_PAGE_SIZE, "index": offset},
+                )
+                response.raise_for_status()
+                payload = response.json()
+            if payload.get("error"):
+                raise ValueError("Deezer returned an API error")
+            rows = payload.get("data", [])
+            items = [_format_deezer_item(row) for row in rows if isinstance(row, dict)]
+            return {
+                "items": [item for item in items if item],
+                "page": page,
+                "has_more": bool(payload.get("next")),
+                "total_results": payload.get("total"),
+                "source": "deezer",
+            }
+        except (httpx.HTTPError, ValueError, TypeError) as exc:
+            logger.info("Deezer search failed (%s)", type(exc).__name__)
+            if source == "deezer" or page > 1:
+                return {"error": "Music search is temporarily unavailable. Please try again shortly."}
+
+    if source in (None, "apple") and page == 1:
+        fallback = await _apple_search(query, "track", 200)
+        if isinstance(fallback, list):
+            return {
+                "items": fallback,
+                "page": 1,
+                "has_more": False,
+                "total_results": len(fallback),
+                "source": "apple",
+            }
+        return fallback
+    return {"items": [], "page": page, "has_more": False, "total_results": 0, "source": source or "deezer"}
+
+
+async def explore_page(page: int = 1, source=None):
+    result = await search_page("pop", page, source)
+    if isinstance(result, dict) and isinstance(result.get("items"), list):
+        for item in result["items"]:
+            item.setdefault("why", "A match from the music catalog")
+    return result
+
+
+async def by_artist_or_genre_page(seed: str, page: int = 1, source=None):
+    return await search_page(str(seed or "pop"), page, source)
 
 
 def _format_spotify_item(item: dict, search_type: str):

@@ -8,9 +8,6 @@ const DOMAINS = [
   { key: "comics", label: "💥 Comics", shortLabel: "Comics", genres: ["Superhero", "Fantasy", "Horror", "Sci-Fi", "Crime"] },
 ];
 
-// Apple's Search API permits up to 200 results per request.
-const MUSIC_SEARCH_RESULT_LIMIT = 200;
-
 const TMDB_GENRES = {
   28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy", 80: "Crime",
   99: "Documentary", 18: "Drama", 10751: "Family", 14: "Fantasy", 36: "History",
@@ -34,6 +31,8 @@ const state = {
   items: [],
   visibleItems: [],
   filters: {},
+  pagination: { page: 0, hasMore: false, source: null, requestUrl: "", options: {}, genre: "", error: "" },
+  loadingMore: false,
   requestId: 0,
 };
 
@@ -236,23 +235,21 @@ async function loadResults() {
   const domain = state.activeDomain;
   const selectedMusicGenre = domain === "music" && state.view === "explore" ? (state.filters.music?.genre || "") : "";
   const genreSearch = Boolean(selectedMusicGenre);
+  const requestUrl = genreSearch
+    ? `${API_BASE}/search/music?q=${encodeURIComponent(selectedMusicGenre)}`
+    : `${API_BASE}/${state.view === "explore" ? "explore" : "for-me"}/${encodeURIComponent(domain)}`;
+  const options = state.view === "explore" || genreSearch
+    ? {}
+    : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(state.preferences[domain] || {}) };
+  resetPagination(requestUrl, options, selectedMusicGenre);
+  state.items = [];
   results.setAttribute("aria-busy", "true");
   const loadingText = genreSearch ? `Finding ${selectedMusicGenre} music…` : `Finding ${domainInfo(domain).shortLabel.toLowerCase()} picks…`;
   results.innerHTML = `<div class="loading-state"><span class="loader" aria-hidden="true"></span><p>${escapeHTML(loadingText)}</p></div>`;
   try {
-    const options = state.view === "explore" || genreSearch
-      ? {}
-      : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(state.preferences[domain] || {}) };
-    const url = genreSearch
-      ? `${API_BASE}/search/music?q=${encodeURIComponent(selectedMusicGenre)}&limit=${MUSIC_SEARCH_RESULT_LIMIT}`
-      : `${API_BASE}/${state.view === "explore" ? "explore" : "for-me"}/${encodeURIComponent(domain)}`;
-    const response = await fetch(url, options);
-    const payload = await response.json();
+    const payload = await requestPage(1, null);
     if (requestId !== state.requestId) return;
-    if (!response.ok) throw new Error(payload?.error || `The server returned ${response.status}.`);
-    if (payload?.error) throw new Error(payload.error);
-    if (!Array.isArray(payload)) throw new Error("The recommendations service returned an unexpected response.");
-    state.items = genreSearch ? catalogGenreResults(payload, selectedMusicGenre) : payload;
+    acceptPage(payload, true);
     renderResults();
   } catch (error) {
     if (requestId !== state.requestId) return;
@@ -273,24 +270,108 @@ function catalogGenreResults(items, genre) {
   }));
 }
 
+function resetPagination(requestUrl, options = {}, genre = "") {
+  state.pagination = { page: 0, hasMore: false, source: null, requestUrl, options, genre, error: "" };
+  state.loadingMore = false;
+}
+
+function pageURL(page, source) {
+  const url = new URL(state.pagination.requestUrl, window.location.href);
+  url.searchParams.set("page", String(page));
+  if (source) url.searchParams.set("source", source);
+  else url.searchParams.delete("source");
+  return url.toString();
+}
+
+async function requestPage(page, source) {
+  const response = await fetch(pageURL(page, source), state.pagination.options);
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload?.error || `The server returned ${response.status}.`);
+  if (payload?.error) throw new Error(payload.error);
+  if (Array.isArray(payload)) return { items: payload, page, has_more: false, source: null };
+  if (!Array.isArray(payload?.items)) throw new Error("The recommendations service returned an unexpected response.");
+  return payload;
+}
+
+function itemKey(item) {
+  const id = item.id ?? item.site_url ?? item.title;
+  return `${item.domain || state.activeDomain}:${String(id).toLowerCase()}`;
+}
+
+function acceptPage(payload, replace = false) {
+  const incoming = state.pagination.genre
+    ? catalogGenreResults(payload.items, state.pagination.genre)
+    : payload.items;
+  if (replace) state.items = incoming;
+  else {
+    const seen = new Set(state.items.map(itemKey));
+    state.items = [...state.items, ...incoming.filter(item => {
+      const key = itemKey(item);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })];
+  }
+  state.pagination.page = Number(payload.page) || state.pagination.page + 1;
+  state.pagination.hasMore = Boolean(payload.has_more);
+  if (payload.source) state.pagination.source = payload.source;
+  state.pagination.totalResults = payload.total_results ?? null;
+  state.pagination.error = "";
+  state.loadingMore = false;
+}
+
+async function loadMoreResults() {
+  if (state.loadingMore || !state.pagination.hasMore) return;
+  const requestId = state.requestId;
+  const nextPage = state.pagination.page + 1;
+  state.loadingMore = true;
+  state.pagination.error = "";
+  document.getElementById("results")?.setAttribute("aria-busy", "true");
+  updatePaginationUI();
+  try {
+    const payload = await requestPage(nextPage, state.pagination.source);
+    if (requestId !== state.requestId) return;
+    acceptPage(payload);
+    document.getElementById("results")?.setAttribute("aria-busy", "false");
+    renderFilteredItems();
+  } catch (error) {
+    if (requestId !== state.requestId) return;
+    state.loadingMore = false;
+    state.pagination.error = error.message || "Could not load more results.";
+    document.getElementById("results")?.setAttribute("aria-busy", "false");
+    updatePaginationUI();
+  }
+}
+
+function updatePaginationUI() {
+  const wrap = document.getElementById("pagination-actions");
+  const button = document.getElementById("load-more-btn");
+  const note = document.getElementById("pagination-note");
+  if (!wrap || !button || !note) return;
+  wrap.hidden = !state.pagination.hasMore && !state.loadingMore && !state.pagination.error;
+  button.disabled = state.loadingMore;
+  button.textContent = state.loadingMore ? "Loading…" : state.pagination.error ? "Try again" : "Load more";
+  note.textContent = state.pagination.error || `${state.items.length} loaded · request more when you’re ready.`;
+  button.onclick = loadMoreResults;
+}
+
 async function loadMusicGenreResults(genre) {
   const results = document.getElementById("results");
   const grid = document.getElementById("result-grid");
   if (!results || !grid) return;
   const requestId = ++state.requestId;
+  const requestUrl = `${API_BASE}/search/music?q=${encodeURIComponent(genre)}`;
+  resetPagination(requestUrl, {}, genre);
+  state.items = [];
   results.setAttribute("aria-busy", "true");
   grid.hidden = false;
   document.getElementById("filtered-empty").hidden = true;
   grid.className = "grid";
   grid.innerHTML = `<div class="genre-search-status" role="status">Searching the music catalog for <strong>${escapeHTML(genre)}</strong>…</div>`;
   try {
-    const response = await fetch(`${API_BASE}/search/music?q=${encodeURIComponent(genre)}&limit=${MUSIC_SEARCH_RESULT_LIMIT}`);
-    const payload = await response.json();
+    const payload = await requestPage(1, null);
     if (requestId !== state.requestId) return;
-    if (!response.ok) throw new Error(payload?.error || `The server returned ${response.status}.`);
-    if (payload?.error) throw new Error(payload.error);
-    if (!Array.isArray(payload)) throw new Error("The music catalog returned an unexpected response.");
-    state.items = catalogGenreResults(payload, genre);
+    acceptPage(payload, true);
     results.setAttribute("aria-busy", "false");
     renderFilteredItems();
   } catch (error) {
@@ -308,8 +389,8 @@ function renderResults() {
   results.setAttribute("aria-busy", "false");
   const domain = domainInfo();
   results.innerHTML = `
-    <div class="shelf-heading"><div><p class="eyebrow">${state.view === "for-me" ? "CURATED FOR YOU" : domain.key === "music" ? "BROWSE BY GENRE" : "THE FULL COLLECTION"}</p><h2>${escapeHTML(domain.label)}</h2></div><span class="result-count" id="result-count"></span></div>
-    ${domain.key === "music" ? `<p class="catalog-note">Genre labels follow the music catalog. Choose a genre to search that category beyond this starting mix.</p>` : ""}
+    <div class="shelf-heading"><div><p class="eyebrow">${state.view === "for-me" ? "CURATED FOR YOU" : domain.key === "music" ? "MUSIC DISCOVERY" : "THE FULL COLLECTION"}</p><h2>${escapeHTML(domain.label)}</h2></div><span class="result-count" id="result-count"></span></div>
+    ${domain.key === "music" ? `<p class="catalog-note">Music results load a page at a time. Open a track for a preview when available, a listening link, and a Gaana search.</p>` : ""}
     <section class="filter-panel" aria-label="Filter and sort recommendations">
       <label class="filter-search"><span class="sr-only">Search ${escapeHTML(domain.shortLabel)}</span><span class="search-icon" aria-hidden="true">⌕</span><input type="search" id="filter-search" placeholder="Search titles, stories, genres…" value="${escapeHTML(state.filters[domain.key]?.query || "")}" /></label>
       <label class="filter-control"><span>Genre</span><select id="filter-genre"><option value="">${domain.key === "music" ? "Popular mix" : "All genres"}</option>${availableGenres().map(genre => `<option value="${escapeHTML(genre)}">${escapeHTML(genre)}</option>`).join("")}</select></label>
@@ -318,7 +399,8 @@ function renderResults() {
       <button class="clear-filters" id="clear-filters" type="button">Reset</button>
     </section>
     <div class="grid" id="result-grid"></div>
-    <div id="filtered-empty" class="message-state empty-state" hidden><h3>No picks match those filters</h3><p>Try a different search or reset the filters.</p><button class="button button-secondary" id="empty-reset" type="button">Reset filters</button></div>`;
+    <div id="filtered-empty" class="message-state empty-state" hidden><h3>No picks match those filters</h3><p>Try a different search or reset the filters.</p><button class="button button-secondary" id="empty-reset" type="button">Reset filters</button></div>
+    <div class="pagination-actions" id="pagination-actions" hidden><p id="pagination-note" role="status"></p><button class="button button-secondary" id="load-more-btn" type="button">Load more</button></div>`;
   const current = state.filters[domain.key] || {};
   document.getElementById("filter-genre").value = current.genre || "";
   document.getElementById("filter-sort").value = current.sort || "recommended";
@@ -375,12 +457,12 @@ function renderFilteredItems() {
   if (filters.sort === "rating-desc") items = [...items].sort((a, b) => Number(b.rating || 0) - Number(a.rating || 0));
   if (filters.sort === "title-asc") items = [...items].sort((a, b) => String(a.title || "").localeCompare(String(b.title || "")));
   state.visibleItems = items;
-  document.getElementById("result-count").textContent = `${items.length} ${items.length === 1 ? "pick" : "picks"}`;
+  document.getElementById("result-count").textContent = `${items.length} shown · ${state.items.length} loaded${state.pagination.hasMore ? " · more available" : ""}`;
   const grid = document.getElementById("result-grid");
   const empty = document.getElementById("filtered-empty");
   grid.hidden = items.length === 0;
   empty.hidden = items.length !== 0;
-  if (domain.key === "music" && !filters.genre) {
+  if (domain.key === "music" && !filters.genre && items.some(item => itemGenres(item).length)) {
     const groups = new Map();
     items.forEach((item, index) => {
       const genre = itemGenres(item)[0] || "Other";
@@ -403,6 +485,7 @@ function renderFilteredItems() {
     image.hidden = true;
     image.closest(".card-art")?.classList.add("image-missing");
   }, { once: true }));
+  updatePaginationUI();
 }
 
 function renderCard(item, index) {
@@ -428,7 +511,7 @@ function renderCard(item, index) {
 function detailsLinks(item) {
   const links = [];
   const provider = String(item.provider || "").toLowerCase();
-  const listenLabel = provider.includes("apple") ? "Open in Apple Music" : provider.includes("spotify") ? "Open in Spotify" : "Listen";
+  const listenLabel = provider.includes("apple") ? "Open in Apple Music" : provider.includes("spotify") ? "Open in Spotify" : provider.includes("deezer") ? "Open in Deezer" : "Listen";
   const candidates = [
     [listenLabel, item.listen_link], ["Read free", item.read_link], ["Get the book", item.buy_link],
     ["Official / reference page", item.site_url], ["Anime reference", item.url], ["Preview", item.preview_link],
