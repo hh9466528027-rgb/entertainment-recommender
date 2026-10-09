@@ -360,7 +360,8 @@ async function loadMusicGenreResults(genre) {
   const grid = document.getElementById("result-grid");
   if (!results || !grid) return;
   const requestId = ++state.requestId;
-  const requestUrl = `${API_BASE}/search/music?q=${encodeURIComponent(genre)}`;
+  const searchTerm = normalize(genre) === "bollywood" ? "Hindi Bollywood songs" : genre;
+  const requestUrl = `${API_BASE}/search/music?q=${encodeURIComponent(searchTerm)}`;
   resetPagination(requestUrl, {}, genre);
   state.items = [];
   results.setAttribute("aria-busy", "true");
