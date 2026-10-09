@@ -29,7 +29,7 @@ Pagination fetches additional provider pages on demand. Results are not an unlim
 | Backend | Python, FastAPI, Pydantic, HTTPX | Routes, provider calls, normalization, and recommendation scoring |
 | Hosting | Vercel and Render | Static frontend and FastAPI backend |
 
-Category adapters use TMDB for movies and series; AniList with Jikan fallback for anime; RAWG for games; Google Books, Gutendex, and Open Library for novels; Comic Vine for comics; and Deezer with Apple/iTunes fallback for music. Music searches do not require Spotify credentials; optional Spotify compatibility settings remain available in the backend.
+Category adapters use TMDB for movies and series; AniList with Jikan fallback for anime; RAWG for games; Google Books, Gutendex, and Open Library for novels; Comic Vine for comics; and Deezer with Apple/iTunes fallback for music. Music searches do not require Spotify credentials; optional Spotify compatibility settings remain available in the backend. For TMDB authentication, the backend prefers `TMDB_BEARER_TOKEN` and falls back to `TMDB_API_KEY` when the bearer token is unset.
 
 ## Recommendation approach
 
@@ -51,7 +51,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Add only the API keys you need to `backend/.env`. TMDB, RAWG, and Comic Vine keys are used for their categories. A Google Books key is optional. AniList/Jikan, Deezer, and Apple/iTunes searches work without user credentials; Spotify credentials are optional for compatibility helpers.
+Add only the credentials you need to `backend/.env`. For TMDB, configure either the API Read Access Token (`TMDB_BEARER_TOKEN`, preferred) or the API key (`TMDB_API_KEY`). RAWG and Comic Vine credentials are used for their categories. A Google Books key is optional. AniList/Jikan, Deezer, and Apple/iTunes searches work without user credentials; Spotify credentials are optional for compatibility helpers.
 
 Run the API from the `backend` directory:
 

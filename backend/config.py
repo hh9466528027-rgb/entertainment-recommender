@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TMDB_API_KEY = os.getenv("TMDB_API_KEY", "")
+TMDB_BEARER_TOKEN = os.getenv("TMDB_BEARER_TOKEN", "")
 RAWG_API_KEY = os.getenv("RAWG_API_KEY", "")
 GOOGLE_BOOKS_API_KEY = os.getenv("GOOGLE_BOOKS_API_KEY", "")
 COMICVINE_API_KEY = os.getenv("COMICVINE_API_KEY", "")

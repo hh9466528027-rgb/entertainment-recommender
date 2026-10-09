@@ -15,7 +15,8 @@ Set credentials in **Render → the backend web service → Environment**. Never
 
 | Environment variable | Used for | Required? |
 |---|---|---|
-| `TMDB_API_KEY` | Movies and series | Yes for TMDB-backed results |
+| `TMDB_BEARER_TOKEN` | TMDB API Read Access Token; preferred | Use this or `TMDB_API_KEY` |
+| `TMDB_API_KEY` | TMDB v3 API key; fallback | Use this or `TMDB_BEARER_TOKEN` |
 | `RAWG_API_KEY` | Games | Yes for RAWG-backed results |
 | `COMICVINE_API_KEY` | Comics | Yes for Comic Vine results |
 | `GOOGLE_BOOKS_API_KEY` | Google Books quota | Optional |
