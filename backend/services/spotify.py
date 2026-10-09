@@ -273,10 +273,10 @@ async def search_page(query: str, page: int = 1, source=None):
 
 
 async def explore_page(page: int = 1, source=None):
-    result = await search_page("pop", page, source)
+    result = await search_page("hits", page, source)
     if isinstance(result, dict) and isinstance(result.get("items"), list):
         for item in result["items"]:
-            item.setdefault("why", "A match from the music catalog")
+            item.setdefault("why", "A match from the music discovery mix")
     return result
 
 
